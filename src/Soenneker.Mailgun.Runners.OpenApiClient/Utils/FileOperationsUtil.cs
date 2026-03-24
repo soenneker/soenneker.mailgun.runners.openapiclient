@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Soenneker.Extensions.String;
 using Soenneker.Git.Util.Abstract;
 using Soenneker.Mailgun.Runners.OpenApiClient.Utils.Abstract;
+using Soenneker.OpenApi.Fixer.Abstract;
 using Soenneker.Utils.Dotnet.Abstract;
 using Soenneker.Utils.Environment;
 using Soenneker.Utils.Process.Abstract;
@@ -30,9 +31,10 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
     private readonly IFileDownloadUtil _fileDownloadUtil;
     private readonly IFileUtil _fileUtil;
     private readonly IDirectoryUtil _directoryUtil;
+    private readonly IOpenApiFixer _openApiFixer;
 
-    public FileOperationsUtil(ILogger<FileOperationsUtil> logger, IConfiguration configuration, IGitUtil gitUtil, IDotnetUtil dotnetUtil, IProcessUtil processUtil, 
-        IFileDownloadUtil fileDownloadUtil, IFileUtil fileUtil, IDirectoryUtil directoryUtil)
+    public FileOperationsUtil(ILogger<FileOperationsUtil> logger, IConfiguration configuration, IGitUtil gitUtil, IDotnetUtil dotnetUtil, IProcessUtil processUtil,
+        IFileDownloadUtil fileDownloadUtil, IFileUtil fileUtil, IDirectoryUtil directoryUtil, IOpenApiFixer openApiFixer)
     {
         _logger = logger;
         _configuration = configuration;
@@ -42,20 +44,28 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
         _fileDownloadUtil = fileDownloadUtil;
         _fileUtil = fileUtil;
         _directoryUtil = directoryUtil;
+        _openApiFixer = openApiFixer;
     }
 
     public async ValueTask Process(CancellationToken cancellationToken = default)
     {
         string gitDirectory = await _gitUtil.CloneToTempDirectory($"https://github.com/soenneker/{Constants.Library.ToLowerInvariantFast()}", cancellationToken: cancellationToken);
 
-        string targetFilePath = Path.Combine(gitDirectory, "openapi.json");
+        string openApiFilePath = Path.Combine(gitDirectory, "openapi.json");
+        string fixedFilePath = Path.Combine(gitDirectory, "fixed.json");
 
-        await _fileUtil.DeleteIfExists(targetFilePath, cancellationToken: cancellationToken);
+        await _fileUtil.DeleteIfExists(openApiFilePath, cancellationToken: cancellationToken);
+        await _fileUtil.DeleteIfExists(fixedFilePath, cancellationToken: cancellationToken);
 
         string openApiDocumentUrl = _configuration["Mailgun:ClientGenerationUrl"] ?? "https://documentation.mailgun.com/_spec/docs/mailgun/api-reference/send/mailgun.json";
 
         string? filePath = await _fileDownloadUtil.Download(openApiDocumentUrl,
-            targetFilePath, fileExtension: ".json", cancellationToken: cancellationToken);
+            openApiFilePath, fileExtension: ".json", cancellationToken: cancellationToken);
+
+        if (filePath.IsNullOrWhiteSpace())
+            throw new InvalidOperationException("Mailgun OpenAPI document could not be downloaded.");
+
+        await _openApiFixer.Fix(filePath, fixedFilePath, cancellationToken);
 
         await _processUtil.Start("dotnet", null, "tool update --global Microsoft.OpenApi.Kiota", waitForExit: true, cancellationToken: cancellationToken);
 
@@ -63,7 +73,7 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
 
         await DeleteAllExceptCsproj(srcDirectory, cancellationToken);
 
-        await _processUtil.Start("kiota", gitDirectory, $"kiota generate -l CSharp -d \"{filePath}\" -o src/{Constants.Library} -c MailgunOpenApiClient -n {Constants.Library}",
+        await _processUtil.Start("kiota", gitDirectory, $"kiota generate -l CSharp -d \"{fixedFilePath}\" -o src/{Constants.Library} -c MailgunOpenApiClient -n {Constants.Library}",
             waitForExit: true, cancellationToken: cancellationToken).NoSync();
 
         await BuildAndPush(gitDirectory, cancellationToken).NoSync();

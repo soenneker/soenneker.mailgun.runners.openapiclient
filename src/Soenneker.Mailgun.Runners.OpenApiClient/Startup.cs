@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Soenneker.Managers.Runners.Registrars;
 using Soenneker.Mailgun.Runners.OpenApiClient.Utils;
 using Soenneker.Mailgun.Runners.OpenApiClient.Utils.Abstract;
+using Soenneker.OpenApi.Fixer.Registrars;
 using Soenneker.Utils.File.Download.Registrars;
 
 namespace Soenneker.Mailgun.Runners.OpenApiClient;
@@ -22,7 +23,8 @@ public static class Startup
         services.AddHostedService<ConsoleHostedService>()
                 .AddScoped<IFileOperationsUtil, FileOperationsUtil>()
                 .AddRunnersManagerAsScoped()
-                .AddFileDownloadUtilAsScoped();
+                .AddFileDownloadUtilAsScoped()
+                .AddOpenApiFixerAsScoped();
 
         return services;
     }
